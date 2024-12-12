@@ -1,0 +1,331 @@
+// scope_window.c
+#include "scope_window.h"
+#include "waveform_generator.h"
+#include <math.h>
+
+static void sample_audio_buffer(CircularBuffer *audio_buffer, float *display_buffer,
+                              size_t *samples_obtained, size_t max_samples) {
+    g_mutex_lock(&audio_buffer->mutex);
+    
+    // Calculate how many samples we can safely read
+    size_t available = audio_buffer->frames_stored;
+    size_t to_read = MIN(available, max_samples);
+    
+    if (to_read > 0) {
+        // Read from current position
+        size_t first_chunk = audio_buffer->size - audio_buffer->read_pos;
+        
+        if (to_read <= first_chunk) {
+            memcpy(display_buffer,
+                   audio_buffer->data + (audio_buffer->read_pos * 2),
+                   to_read * 2 * sizeof(float));
+        } else {
+            memcpy(display_buffer,
+                   audio_buffer->data + (audio_buffer->read_pos * 2),
+                   first_chunk * 2 * sizeof(float));
+            memcpy(display_buffer + (first_chunk * 2),
+                   audio_buffer->data,
+                   (to_read - first_chunk) * 2 * sizeof(float));
+        }
+        
+        *samples_obtained = to_read;
+    } else {
+        *samples_obtained = 0;
+    }
+    
+    g_mutex_unlock(&audio_buffer->mutex);
+}
+
+static gpointer scope_display_thread(gpointer data) {
+    ScopeWindow *scope = (ScopeWindow *)data;
+    GTimer *timer = g_timer_new();
+    gdouble last_update = 0.0;
+    
+    // Temp buffer for sampling
+    float *sample_buffer = g_malloc(SCOPE_BUFFER_SIZE * 2 * sizeof(float));
+    size_t samples_read;
+
+    while (TRUE) {
+        g_mutex_lock(&scope->display_mutex);
+        if (!scope->display_running) {
+            g_mutex_unlock(&scope->display_mutex);
+            break;
+        }
+        g_mutex_unlock(&scope->display_mutex);
+
+        gdouble current_time = g_timer_elapsed(timer, NULL);
+        if ((current_time - last_update) * 1000.0 >= UPDATE_INTERVAL_MS) {
+            // Get samples from audio buffer
+            if (scope->audio_buffer != NULL) {
+                sample_audio_buffer(scope->audio_buffer, sample_buffer, 
+                                  &samples_read, SCOPE_BUFFER_SIZE);
+            
+                if (samples_read > 0) {
+                    // Look for trigger (rising zero crossing)
+                    size_t trigger_idx = 0;
+                    for (size_t i = 1; i < samples_read; i++) {
+                        if (sample_buffer[(i-1)*2] <= 0.0f && 
+                            sample_buffer[i*2] > 0.0f) {
+                            trigger_idx = i;
+                            break;
+                        }
+                    }
+                    
+                    // Only update display if we found a trigger point
+                    if (trigger_idx < samples_read) {
+                        g_mutex_lock(&scope->display_mutex);
+                        size_t samples_to_copy = samples_read - trigger_idx;
+                        memcpy(scope->display_buffer,
+                               &sample_buffer[trigger_idx * 2],
+                               samples_to_copy * 2 * sizeof(float));
+                        scope->display_buffer_size = samples_to_copy;
+                        g_mutex_unlock(&scope->display_mutex);
+                        
+                        gtk_widget_queue_draw(scope->drawing_area);
+                    }
+                }
+            }
+            
+            last_update = current_time;
+        } else {
+            g_usleep(1000);
+        }
+    }
+
+    g_free(sample_buffer);
+    g_timer_destroy(timer);
+    return NULL;
+}
+
+void scope_window_get_size(ScopeWindow *scope, int *width, int *height, gboolean *changed) {
+    g_mutex_lock(&scope->data_mutex);
+    if (width) *width = scope->window_width;
+    if (height) *height = scope->window_height;
+    if (changed) {
+        *changed = scope->size_changed;
+        scope->size_changed = FALSE;  // Clear flag after reading
+    }
+    g_mutex_unlock(&scope->data_mutex);
+}
+
+size_t get_samples_per_division(float time_per_div) {
+    float time_in_seconds = time_per_div / 1000.0f;
+    return (size_t)(SAMPLE_RATE * time_in_seconds);
+}
+
+
+size_t scope_window_get_samples_per_div(ScopeWindow *scope) {
+    float time_in_seconds = scope->time_per_div / 1000.0f;
+    return (size_t)(SAMPLE_RATE * time_in_seconds);
+}
+
+
+static void on_size_allocate(GtkWidget *widget, GtkAllocation *allocation, gpointer data) {
+    (void)widget;  // Mark parameter as intentionally unused
+    ScopeWindow *scope = (ScopeWindow *)data;
+    
+    g_mutex_lock(&scope->data_mutex);
+    if (scope->window_width != allocation->width || 
+        scope->window_height != allocation->height) {
+        
+        scope->window_width = allocation->width;
+        scope->window_height = allocation->height;
+        scope->size_changed = TRUE;
+        
+        g_print("Scope window resized to: %dx%d\n", 
+                scope->window_width, scope->window_height);
+    }
+    g_mutex_unlock(&scope->data_mutex);
+}
+
+static gboolean on_draw(GtkWidget *widget, cairo_t *cr) {
+    ScopeWindow *scope = (ScopeWindow *)g_object_get_data(G_OBJECT(widget), "scope");
+    
+    // Get widget dimensions
+    GtkAllocation allocation;
+    gtk_widget_get_allocation(widget, &allocation);
+    int width = allocation.width;
+    int height = allocation.height;
+    
+    // Draw black background
+    cairo_set_source_rgb(cr, 0, 0, 0);
+    cairo_paint(cr);
+    
+    // Draw grid
+    cairo_set_source_rgb(cr, 0.2, 0.2, 0.2);
+    cairo_set_line_width(cr, 1.0);
+    
+    // Vertical divisions
+    float div_width = width / 12.0f;  // 12 divisions horizontally
+    for (int i = 0; i <= 12; i++) {
+        double x = i * div_width;
+        cairo_move_to(cr, x, 0);
+        cairo_line_to(cr, x, height);
+    }
+    
+    // Horizontal divisions
+    float div_height = height / 8.0f;  // 8 divisions vertically
+    for (int i = 0; i <= 8; i++) {
+        double y = i * div_height;
+        cairo_move_to(cr, 0, y);
+        cairo_line_to(cr, width, y);
+    }
+    cairo_stroke(cr);
+    
+    // Draw waveform
+    g_mutex_lock(&scope->display_mutex);
+    
+    if (scope->display_buffer_size > 0) {
+        cairo_set_source_rgb(cr, 0, 1, 0);
+        cairo_set_line_width(cr, 2.0);
+        
+        float points_per_pixel = scope->display_buffer_size / (float)width;
+        float half_height = height / 2.0f;
+        float scale = height / 4.0f;  // Scale to use middle 50% of screen
+        
+        // Start path at first point
+        float y_val = scope->display_buffer[0] * scale;
+        cairo_move_to(cr, 0, half_height - y_val);
+        
+        // Draw rest of points
+        for (int x = 1; x < width; x++) {
+            size_t idx = (size_t)(x * points_per_pixel);
+            if (idx < scope->display_buffer_size) {
+                y_val = scope->display_buffer[idx * 2] * scale;
+                cairo_line_to(cr, x, half_height - y_val);
+            }
+        }
+        
+        cairo_stroke(cr);
+    }
+    
+    g_mutex_unlock(&scope->display_mutex);
+    
+    return TRUE;
+}
+
+ScopeWindow* scope_window_create(GtkWidget *parent, ParameterStore *params) {
+    g_print("Creating scope window\n");
+    ScopeWindow *scope = g_new0(ScopeWindow, 1);
+    scope->params = params;
+    
+    // Initialize data buffer
+    scope->data_size = SCOPE_BUFFER_SIZE;
+    scope->waveform_data = g_malloc(sizeof(float) * scope->data_size * 2);
+    scope->write_pos = 0;
+    
+    // Initialize display parameters
+    scope->time_scale = 1.0f;
+    scope->volt_scale = 1.0f;
+    scope->trigger_level = 0.0f;
+    scope->auto_trigger = TRUE;
+    scope->window_width = 1200;   // Default width
+    scope->window_height = 800;   // Default height
+    scope->size_changed = FALSE;
+    scope->time_per_div = 1.0f;   // 1ms per division default
+    
+    // Initialize thread-related items
+    g_mutex_init(&scope->data_mutex);
+    g_mutex_init(&scope->display_mutex);
+    g_cond_init(&scope->display_cond);
+    scope->display_running = TRUE;
+    
+    // Initialize display buffer
+    scope->display_buffer = g_malloc(sizeof(float) * SCOPE_BUFFER_SIZE * 2);
+    scope->display_buffer_size = 0;
+    
+    // Create drawing area
+    scope->drawing_area = gtk_drawing_area_new();
+    gtk_widget_set_size_request(scope->drawing_area, 
+                              scope->window_width, 
+                              scope->window_height);
+    g_object_set_data(G_OBJECT(scope->drawing_area), "scope", scope);
+    gtk_widget_set_hexpand(scope->drawing_area, TRUE);
+    gtk_widget_set_vexpand(scope->drawing_area, TRUE);
+    
+    // Connect signals
+    g_signal_connect(scope->drawing_area, "draw", 
+                    G_CALLBACK(on_draw), NULL);
+    g_signal_connect(scope->drawing_area, "size-allocate", 
+                    G_CALLBACK(on_size_allocate), scope);
+    
+    // Add to parent
+    gtk_container_add(GTK_CONTAINER(parent), scope->drawing_area);
+
+    scope->display_thread = g_thread_new("scope_display",
+                                       scope_display_thread,
+                                       scope);
+    
+    return scope;
+}
+
+
+
+void scope_window_update_data(ScopeWindow *scope, const float *data, size_t count) {
+    g_mutex_lock(&scope->data_mutex);
+    
+    // Copy new data into circular buffer
+    size_t remaining = scope->data_size - scope->write_pos;
+    if (count <= remaining) {
+        memcpy(&scope->waveform_data[scope->write_pos * 2], data, count * sizeof(float) * 2);
+    } else {
+        memcpy(&scope->waveform_data[scope->write_pos * 2], data, remaining * sizeof(float) * 2);
+        memcpy(scope->waveform_data, &data[remaining * 2], (count - remaining) * sizeof(float) * 2);
+    }
+    
+    scope->write_pos = (scope->write_pos + count) % scope->data_size;
+    
+    g_mutex_unlock(&scope->data_mutex);
+    
+    // Queue redraw for animation
+    if (scope->drawing_area) {
+        gtk_widget_queue_draw(scope->drawing_area);
+    }
+}
+
+void scope_window_destroy(ScopeWindow *scope) {
+    if (!scope) return;
+    
+    // Stop display thread
+    g_mutex_lock(&scope->display_mutex);
+    scope->display_running = FALSE;
+    g_cond_signal(&scope->display_cond);
+    g_mutex_unlock(&scope->display_mutex);
+    
+    if (scope->display_thread) {
+        g_thread_join(scope->display_thread);
+    }
+    
+    g_mutex_lock(&scope->data_mutex);
+    if (scope->waveform_data) {
+        g_free(scope->waveform_data);
+        scope->waveform_data = NULL;
+    }
+    if (scope->display_buffer) {
+        g_free(scope->display_buffer);
+        scope->display_buffer = NULL;
+    }
+    g_mutex_unlock(&scope->data_mutex);
+    
+    g_mutex_clear(&scope->data_mutex);
+    g_mutex_clear(&scope->display_mutex);
+    g_cond_clear(&scope->display_cond);
+    
+    g_free(scope);
+}
+
+void scope_window_set_time_scale(ScopeWindow *scope, float ms_per_div) {
+    scope->time_scale = ms_per_div;
+    gtk_widget_queue_draw(scope->drawing_area);
+}
+
+void scope_window_set_volt_scale(ScopeWindow *scope, float volts_per_div) {
+    scope->volt_scale = volts_per_div;
+    gtk_widget_queue_draw(scope->drawing_area);
+}
+
+void scope_window_set_trigger(ScopeWindow *scope, float level, gboolean auto_mode) {
+    scope->trigger_level = level;
+    scope->auto_trigger = auto_mode;
+    gtk_widget_queue_draw(scope->drawing_area);
+}
