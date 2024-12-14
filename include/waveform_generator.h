@@ -10,6 +10,10 @@
 #define BUFFER_SIZE 256
 #define UPDATE_INTERVAL_MS 32
 
+#define TARGET_FPS 60
+#define FRAME_TIME_US (1000000 / TARGET_FPS)  // Convert to microseconds
+
+
 typedef struct {
     float *data;
     size_t size;

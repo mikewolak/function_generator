@@ -5,6 +5,7 @@
 #include <math.h>
 #include <sys/time.h>
 #include <time.h>
+#include <pthread.h>
 
 void circular_buffer_init(CircularBuffer *buffer, size_t size_in_frames) {
     buffer->size = size_in_frames;
@@ -41,31 +42,39 @@ void circular_buffer_destroy(CircularBuffer *buffer) {
 
 size_t circular_buffer_write(CircularBuffer *buffer, float *data, size_t frames) {
     g_mutex_lock(&buffer->mutex);
-    
+
+    // First calculate available space (in frames)
     size_t frames_available = buffer->size - buffer->frames_stored;
     size_t frames_to_write = (frames <= frames_available) ? frames : frames_available;
-    
+
     if (frames_to_write > 0) {
-        // Single-chunk write
-        if (buffer->write_pos + frames_to_write <= buffer->size) {
-            memcpy(buffer->data + (buffer->write_pos * 2), data, 
-                   frames_to_write * 2 * sizeof(float));
+        // Calculate in stereo samples for safer bounds checking
+        size_t stereo_write_pos = buffer->write_pos * 2;
+        size_t stereo_buffer_size = buffer->size * 2;
+        size_t stereo_frames_to_write = frames_to_write * 2;
+
+        // Check if we can write in one chunk
+        if (stereo_write_pos + stereo_frames_to_write <= stereo_buffer_size) {
+            memcpy(buffer->data + stereo_write_pos, data,
+                   stereo_frames_to_write * sizeof(float));
         } else {
-            size_t first_chunk = buffer->size - buffer->write_pos;
-            memcpy(buffer->data + (buffer->write_pos * 2), data,
-                   first_chunk * 2 * sizeof(float));
-            memcpy(buffer->data, data + (first_chunk * 2),
-                   (frames_to_write - first_chunk) * 2 * sizeof(float));
+            // Split write into two chunks
+            size_t first_chunk_stereo = stereo_buffer_size - stereo_write_pos;
+            memcpy(buffer->data + stereo_write_pos, data,
+                   first_chunk_stereo * sizeof(float));
+            memcpy(buffer->data, data + first_chunk_stereo,
+                   (stereo_frames_to_write - first_chunk_stereo) * sizeof(float));
         }
-        
+
         buffer->write_pos = (buffer->write_pos + frames_to_write) % buffer->size;
         buffer->frames_stored += frames_to_write;
-        
-        g_print("Write: stored=%zu/%zu pos=%zu/%zu\n",
+
+        g_print("Write: stored=%zu/%zu pos=%zu/%zu (stereo_pos=%zu)\n",
                 buffer->frames_stored, buffer->size,
-                buffer->write_pos, buffer->read_pos);
+                buffer->write_pos, buffer->read_pos,
+                stereo_write_pos);
     }
-    
+
     g_mutex_unlock(&buffer->mutex);
     return frames_to_write;
 }
@@ -123,12 +132,24 @@ static int pa_callback(const void *input,
                       const PaStreamCallbackTimeInfo* timeInfo,
                       PaStreamCallbackFlags statusFlags,
                       void *userData) {
-    (void)input;
+    (void)input;           // Unused parameters marked explicitly
     (void)timeInfo;
     (void)statusFlags;
     
+    static bool priority_set = false;
     AudioManager *manager = (AudioManager *)userData;
     float *out = (float*)output;
+    
+    // Set thread priority once on first callback
+    if (!priority_set) {
+        // macOS thread priority setting
+        if (pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0) == 0) {
+            g_print("Audio callback: Set to USER_INTERACTIVE QoS\n");
+            priority_set = true;
+        } else {
+            g_print("Audio callback: Failed to set thread QoS\n");
+        }
+    }
     
     g_mutex_lock(&manager->buffer.mutex);
     

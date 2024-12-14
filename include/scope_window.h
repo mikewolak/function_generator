@@ -3,6 +3,7 @@
 
 #include <gtk/gtk.h>
 #include "parameter_store.h"
+#include <stdatomic.h>
 #include "common_defs.h"
 
 typedef struct {
@@ -10,6 +11,17 @@ typedef struct {
     float value;         // Signal value at trigger
     gboolean valid;          // Whether we have a valid trigger
 } TriggerInfo;
+
+typedef struct {
+    float *buffers[3];          // Triple buffer array
+    atomic_int write_index;     // Current writer buffer
+    atomic_int display_index;   // Current display buffer
+    atomic_int process_index;   // Buffer being processed
+    size_t buffer_size;         // Size of each buffer
+    atomic_bool new_data;       // Flag for new data availability
+} DisplayBuffers;
+
+
 
 
 typedef struct {
@@ -28,6 +40,10 @@ typedef struct {
     gboolean size_changed;     // Flag for window resize
     float time_per_div;        // Time base in milliseconds per division
     TriggerInfo trigger;  // Current trigger information
+    GMutex update_mutex;     // Protect buffer updates
+    DisplayBuffers *triple_buffer;
+
+
 
 } ScopeWindow;
 
