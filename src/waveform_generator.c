@@ -7,6 +7,62 @@ static float generate_waveform(float phase, WaveformType type, float duty_cycle)
 static gpointer generator_thread_func(gpointer data);
 size_t circular_buffer_write(CircularBuffer *buffer, float *data, size_t frames);
 
+// Utility function for tanh approximation (faster than std tanh)
+static float fast_tanh(float x) {
+    float x2 = x * x;
+    return x * (27.0f + x2) / (27.0f + 9.0f * x2);
+}
+
+static void ladder_filter_reset(LadderFilter *filter) {
+    memset(filter->stage, 0, sizeof(float) * FILTER_STAGES);
+    memset(filter->delay, 0, sizeof(float) * FILTER_STAGES);
+    filter->cutoff_mod = 0.0f;  // Reset modulation
+    filter->res_mod = 0.0f;     // Reset resonance mod
+}
+
+
+static float ladder_filter_process(LadderFilter *filter, float input, float sample_rate) {
+    // Calculate cutoff frequency (keep in Hz)
+    float fc = filter->cutoff + filter->cutoff_mod;
+    fc = fmaxf(20.0f, fminf(fc, 20000.0f));
+    
+    // Normalized frequency [0..1]
+    float f = fc / sample_rate;
+    
+    // Enhanced resonance response
+    float res = filter->resonance + filter->res_mod;
+    res = fmaxf(0.0f, fminf(res, 1.0f));
+    // Exponential scaling for more musical resonance control
+    res = 4.0f * powf(res, 0.5f);
+    
+    // Compute filter coefficients
+    float k = 4.0f * (f * M_PI);
+    float p = k / (1.0f + k);
+    
+    // Temperature compensation increases with resonance
+    float comp = 1.0f + p * (0.5f + 0.5f * res);
+    
+    // Input with resonance feedback
+    float input_with_res = input - res * filter->delay[3];
+    input_with_res *= comp;
+    
+    // Cascade of 4 one-pole filters
+    float stages[4];
+    stages[0] = input_with_res;
+    
+    for (int i = 0; i < 4; i++) {
+        if (i > 0) stages[i] = filter->delay[i-1];
+        
+        // Enhanced nonlinear processing
+        stages[i] = fast_tanh(stages[i] * (1.0f + 0.5f * res));
+        
+        // One-pole lowpass filter
+        filter->delay[i] = filter->delay[i] + p * (stages[i] - filter->delay[i]);
+    }
+    
+    return filter->delay[3];
+}
+
 
 static float generate_waveform(float phase, WaveformType type, float duty_cycle) {
     // Normalize phase to 0-2π range
@@ -39,81 +95,117 @@ static float generate_waveform(float phase, WaveformType type, float duty_cycle)
 }
 
 static size_t audio_callback(float *buffer, size_t frames, void *userdata) {
-    WaveformGenerator *gen = (WaveformGenerator *)userdata;
-    
-    // Get current parameters with minimal lock time
-    g_mutex_lock(&gen->params->mutex);
-    WaveformType current_type = gen->params->waveform;
-    float current_frequency = gen->params->frequency;
-    float current_amplitude = gen->params->amplitude;
-    float current_duty_cycle = gen->params->duty_cycle;
-    float current_fm_freq = gen->params->fm_frequency;
-    float current_fm_depth = gen->params->fm_depth;
-    float current_am_freq = gen->params->am_frequency;
-    float current_am_depth = gen->params->am_depth;
-    float current_dcm_freq = gen->params->dcm_frequency;
-    float current_dcm_depth = gen->params->dcm_depth;
-    g_mutex_unlock(&gen->params->mutex);
+   WaveformGenerator *gen = (WaveformGenerator *)userdata;
+   
+   // Get current parameters with minimal lock time
+   g_mutex_lock(&gen->params->mutex);
+   WaveformType current_type = gen->params->waveform;
+   float current_frequency = gen->params->frequency;
+   float current_amplitude = gen->params->amplitude;
+   float current_duty_cycle = gen->params->duty_cycle;
+   float current_fm_freq = gen->params->fm_frequency;
+   float current_fm_depth = gen->params->fm_depth;
+   float current_am_freq = gen->params->am_frequency;
+   float current_am_depth = gen->params->am_depth;
+   float current_dcm_freq = gen->params->dcm_frequency;
+   float current_dcm_depth = gen->params->dcm_depth;
+   float current_cutoff = gen->params->filter_cutoff;
+   float current_resonance = gen->params->filter_resonance;
+   float current_cutoff_lfo_freq = gen->params->filter_cutoff_lfo_freq;
+   float current_cutoff_lfo_amount = gen->params->filter_cutoff_lfo_amount;
+   float current_res_lfo_freq = gen->params->filter_res_lfo_freq;
+   float current_res_lfo_amount = gen->params->filter_res_lfo_amount;
+   g_mutex_unlock(&gen->params->mutex);
 
-    g_mutex_lock(&gen->mutex);
-    float current_phase = gen->phase;
-    float current_fm_phase = gen->fm_phase;
-    float current_am_phase = gen->am_phase;
-    float current_dcm_phase = gen->dcm_phase;
-    
-    // Generate samples
-    for (size_t i = 0; i < frames; i++) {
-        // Calculate FM modulation
-        float frequency_mod = 0.0f;
-        if (current_fm_freq > 0.0f) {
-            frequency_mod = current_fm_depth * sinf(current_fm_phase);
-            current_fm_phase = fmodf(current_fm_phase + 
-                (2.0f * M_PI * current_fm_freq / SAMPLE_RATE), 2.0f * M_PI);
-        }
+   g_mutex_lock(&gen->mutex);
+   float current_phase = gen->phase;
+   float current_fm_phase = gen->fm_phase;
+   float current_am_phase = gen->am_phase;
+   float current_dcm_phase = gen->dcm_phase;
+   float cutoff_lfo_phase = gen->filter.cutoff_lfo_phase;
+   float res_lfo_phase = gen->filter.res_lfo_phase;
+   
+   // Generate samples
+   for (size_t i = 0; i < frames; i++) {
+       // Calculate FM modulation
+       float frequency_mod = 0.0f;
+       if (current_fm_freq > 0.0f) {
+           frequency_mod = current_fm_depth * sinf(current_fm_phase);
+           current_fm_phase = fmodf(current_fm_phase + 
+               (2.0f * M_PI * current_fm_freq / SAMPLE_RATE), 2.0f * M_PI);
+       }
 
-        // Calculate duty cycle modulation
-        float duty_mod = current_duty_cycle;
-        if (current_dcm_freq > 0.0f) {
-            duty_mod += current_dcm_depth * sinf(current_dcm_phase);
-            duty_mod = fmaxf(0.1f, fminf(0.9f, duty_mod));
-            current_dcm_phase = fmodf(current_dcm_phase + 
-                (2.0f * M_PI * current_dcm_freq / SAMPLE_RATE), 2.0f * M_PI);
-        }
-        
-        // Generate base waveform
-        float wave_value = generate_waveform(current_phase, current_type, duty_mod);
-        
-        // Apply AM modulation
-        float amplitude_mod = 1.0f;
-        if (current_am_freq > 0.0f) {
-            amplitude_mod = 1.0f + (current_am_depth * sinf(current_am_phase));
-            current_am_phase = fmodf(current_am_phase + 
-                (2.0f * M_PI * current_am_freq / SAMPLE_RATE), 2.0f * M_PI);
-        }
-        
-        // Calculate final value
-        float value = wave_value * current_amplitude * amplitude_mod * 0.25f;
-        
-        // Write to stereo buffer
-        buffer[i * 2] = value;
-        buffer[i * 2 + 1] = value;
-        
-        // Update phase
-        current_phase = fmodf(current_phase + 
-            (2.0f * M_PI * current_frequency / SAMPLE_RATE) * 
-            (1.0f + frequency_mod), 2.0f * M_PI);
-    }
-    
-    // Save phase states
-    gen->phase = current_phase;
-    gen->fm_phase = current_fm_phase;
-    gen->am_phase = current_am_phase;
-    gen->dcm_phase = current_dcm_phase;
-    g_mutex_unlock(&gen->mutex);
-    
-    return frames;
+       // Calculate duty cycle modulation
+       float duty_mod = current_duty_cycle;
+       if (current_dcm_freq > 0.0f) {
+           duty_mod += current_dcm_depth * sinf(current_dcm_phase);
+           duty_mod = fmaxf(0.1f, fminf(0.9f, duty_mod));
+           current_dcm_phase = fmodf(current_dcm_phase + 
+               (2.0f * M_PI * current_dcm_freq / SAMPLE_RATE), 2.0f * M_PI);
+       }
+       
+       // Generate base waveform
+       float wave_value = generate_waveform(current_phase, current_type, duty_mod);
+       
+       // Calculate filter modulation - use Hz range for cutoff modulation
+       float cutoff_mod = 0.0f;
+       if (current_cutoff_lfo_freq > 0.0f) {
+           // Modulate between 20Hz and current cutoff frequency
+           float mod_range = current_cutoff - 20.0f;
+           cutoff_mod = current_cutoff_lfo_amount * sinf(cutoff_lfo_phase) * mod_range;
+           cutoff_lfo_phase += 2.0f * M_PI * current_cutoff_lfo_freq / SAMPLE_RATE;
+           if (cutoff_lfo_phase >= 2.0f * M_PI) 
+               cutoff_lfo_phase -= 2.0f * M_PI;
+       }
+       
+       float res_mod = 0.0f;
+       if (current_res_lfo_freq > 0.0f) {
+           res_mod = current_res_lfo_amount * sinf(res_lfo_phase);
+           res_lfo_phase += 2.0f * M_PI * current_res_lfo_freq / SAMPLE_RATE;
+           if (res_lfo_phase >= 2.0f * M_PI) 
+               res_lfo_phase -= 2.0f * M_PI;
+       }
+       
+       // Apply filter
+       gen->filter.cutoff = current_cutoff;
+       gen->filter.resonance = current_resonance;
+       gen->filter.cutoff_mod = cutoff_mod;
+       gen->filter.res_mod = res_mod;
+       
+       wave_value = ladder_filter_process(&gen->filter, wave_value, SAMPLE_RATE);
+       
+       // Apply AM modulation
+       float amplitude_mod = 1.0f;
+       if (current_am_freq > 0.0f) {
+           amplitude_mod = 1.0f + (current_am_depth * sinf(current_am_phase));
+           current_am_phase = fmodf(current_am_phase + 
+               (2.0f * M_PI * current_am_freq / SAMPLE_RATE), 2.0f * M_PI);
+       }
+       
+       // Calculate final value
+       float value = wave_value * current_amplitude * amplitude_mod;
+       
+       // Write to stereo buffer
+       buffer[i * 2] = value;
+       buffer[i * 2 + 1] = value;
+       
+       // Update phase
+       current_phase = fmodf(current_phase + 
+           (2.0f * M_PI * current_frequency / SAMPLE_RATE) * 
+           (1.0f + frequency_mod), 2.0f * M_PI);
+   }
+   
+   // Save phase states
+   gen->phase = current_phase;
+   gen->fm_phase = current_fm_phase;
+   gen->am_phase = current_am_phase;
+   gen->dcm_phase = current_dcm_phase;
+   gen->filter.cutoff_lfo_phase = cutoff_lfo_phase;
+   gen->filter.res_lfo_phase = res_lfo_phase;
+   g_mutex_unlock(&gen->mutex);
+   
+   return frames;
 }
-
 
 #define TARGET_BUFFER_FILL (CIRCULAR_BUFFER_FRAMES / 2)  // Try to maintain 50% fill
 
@@ -246,25 +338,15 @@ static gpointer generator_thread_func(gpointer data) {
    return NULL;
 }
 
+
 WaveformGenerator* waveform_generator_create(ParameterStore *params, ScopeWindow *scope, AudioManager *audio) {
     g_print("Creating waveform generator\n");
     
-    if (!params || !scope) {
-        g_print("Error: Invalid parameters for waveform generator\n");
-        return NULL;
-    }
-
     WaveformGenerator *gen = g_new0(WaveformGenerator, 1);
-    if (!gen) {
-        g_print("Error: Failed to allocate waveform generator\n");
-        return NULL;
-    }
-    
-    // Initialize basic parameters
     gen->params = params;
     gen->scope = scope;
-    gen->audio = audio;  // Can be NULL
-    gen->running = FALSE;  // Don't start thread until fully initialized
+    gen->audio = audio;
+    gen->running = TRUE;
     gen->phase = 0.0f;
     gen->fm_phase = 0.0f;
     gen->am_phase = 0.0f;
@@ -272,28 +354,19 @@ WaveformGenerator* waveform_generator_create(ParameterStore *params, ScopeWindow
     gen->sample_rate = SAMPLE_RATE;
     gen->buffer_size = BUFFER_SIZE;
     
-    // Initialize synchronization primitives
+    // Initialize filter
+    ladder_filter_reset(&gen->filter);
+    
     g_mutex_init(&gen->mutex);
     g_cond_init(&gen->cond);
     
-    // Now that everything is initialized, mark as running and start thread
-    gen->running = TRUE;
-    
-    g_print("Starting generator thread...\n");
+    // Start generator thread
     gen->generator_thread = g_thread_new("waveform_generator", 
                                        generator_thread_func, gen);
     
-    if (!gen->generator_thread) {
-        g_print("Error: Failed to create generator thread\n");
-        g_mutex_clear(&gen->mutex);
-        g_cond_clear(&gen->cond);
-        g_free(gen);
-        return NULL;
-    }
-    
-    g_print("Waveform generator created successfully\n");
     return gen;
 }
+
 
 void waveform_generator_destroy(WaveformGenerator *gen) {
     if (!gen) return;

@@ -22,6 +22,18 @@ typedef struct {
     size_t target_cycles;  // Number of cycles to show on display
 } DisplayBuffer;
 
+#define FILTER_STAGES 4
+
+typedef struct {
+    float cutoff;
+    float resonance;
+    float stage[FILTER_STAGES];
+    float delay[FILTER_STAGES];
+    float cutoff_mod;
+    float res_mod;
+    float cutoff_lfo_phase;
+    float res_lfo_phase;
+} LadderFilter;
 
 typedef struct {
     ParameterStore *params;
@@ -37,6 +49,7 @@ typedef struct {
     float dcm_phase;       // Duty cycle modulation phase
     uint32_t sample_rate;  // Sample rate in Hz
     size_t buffer_size;    // Number of samples per update
+    LadderFilter filter;
 } WaveformGenerator;
 
 // Function declarations

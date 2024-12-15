@@ -1,8 +1,7 @@
-// parameter_store.h
 #ifndef PARAMETER_STORE_H
 #define PARAMETER_STORE_H
 
-#include <gtk/gtk.h>
+#include <glib.h>
 
 typedef enum {
     WAVE_SINE,
@@ -11,8 +10,11 @@ typedef enum {
     WAVE_TRIANGLE
 } WaveformType;
 
-// parameter_store.h
-typedef struct {
+struct ParameterStore {
+    GMutex mutex;
+    GCond changed;
+    
+    // Waveform parameters
     WaveformType waveform;
     float frequency;
     float amplitude;
@@ -21,33 +23,39 @@ typedef struct {
     float fm_depth;
     float am_frequency;
     float am_depth;
-    float dcm_frequency;    // Duty Cycle Modulation frequency
-    float dcm_depth;        // Duty Cycle Modulation depth
+    float dcm_frequency;
+    float dcm_depth;
     gboolean local_preview;
     gboolean use_adc;
-    GMutex mutex;
-    GCond changed;
-} ParameterStore;
+    
+    // Filter parameters
+    float filter_cutoff;
+    float filter_resonance;
+    float filter_cutoff_lfo_freq;
+    float filter_cutoff_lfo_amount;
+    float filter_res_lfo_freq;
+    float filter_res_lfo_amount;
+};
 
-// Add new function declaration
-void parameter_store_set_dcm(ParameterStore *store, float freq, float depth);
+typedef struct ParameterStore ParameterStore;
 
-// Create and initialize parameter store
-ParameterStore* parameter_store_create(void);
+// Function declarations
+struct ParameterStore* parameter_store_create(void);
+void parameter_store_destroy(struct ParameterStore *store);
+void parameter_store_set_waveform(struct ParameterStore *store, WaveformType type);
+void parameter_store_set_frequency(struct ParameterStore *store, float freq);
+void parameter_store_set_amplitude(struct ParameterStore *store, float amp);
+void parameter_store_set_duty_cycle(struct ParameterStore *store, float duty);
+void parameter_store_set_fm(struct ParameterStore *store, float freq, float depth);
+void parameter_store_set_am(struct ParameterStore *store, float freq, float depth);
+void parameter_store_set_preview_mode(struct ParameterStore *store, gboolean local);
+void parameter_store_set_adc_mode(struct ParameterStore *store, gboolean use_adc);
+void parameter_store_set_dcm(struct ParameterStore *store, float freq, float depth);
 
-// Clean up resources
-void parameter_store_destroy(ParameterStore *store);
-
-// Thread-safe parameter updates
-void parameter_store_set_waveform(ParameterStore *store, WaveformType type);
-void parameter_store_set_frequency(ParameterStore *store, float freq);
-void parameter_store_set_amplitude(ParameterStore *store, float amp);
-void parameter_store_set_duty_cycle(ParameterStore *store, float duty);
-void parameter_store_set_fm(ParameterStore *store, float freq, float depth);
-void parameter_store_set_am(ParameterStore *store, float freq, float depth);
-void parameter_store_set_preview_mode(ParameterStore *store, gboolean local);
-void parameter_store_set_adc_mode(ParameterStore *store, gboolean use_adc);
-void parameter_store_set_dcm(ParameterStore *store, float freq, float depth);
-
+// New filter functions
+void parameter_store_set_filter_cutoff(struct ParameterStore *store, float cutoff);
+void parameter_store_set_filter_resonance(struct ParameterStore *store, float resonance);
+void parameter_store_set_filter_cutoff_lfo(struct ParameterStore *store, float freq, float amount);
+void parameter_store_set_filter_res_lfo(struct ParameterStore *store, float freq, float amount);
 
 #endif // PARAMETER_STORE_H

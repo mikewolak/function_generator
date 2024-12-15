@@ -42,12 +42,37 @@ static void on_parameter_changed(WaveformDial *dial, float value, gpointer user_
     }
     else if (GTK_WIDGET(dial) == panel->dcm_freq_dial) {
         parameter_store_set_dcm(panel->params, value,
-                            waveform_dial_get_value(WAVEFORM_DIAL(panel->dcm_depth_dial)));
+                             waveform_dial_get_value(WAVEFORM_DIAL(panel->dcm_depth_dial)));
     }
     else if (GTK_WIDGET(dial) == panel->dcm_depth_dial) {
         parameter_store_set_dcm(panel->params,
-                            waveform_dial_get_value(WAVEFORM_DIAL(panel->dcm_freq_dial)),
-                            value);
+                             waveform_dial_get_value(WAVEFORM_DIAL(panel->dcm_freq_dial)),
+                             value);
+    }
+    // Filter parameter handling
+    else if (GTK_WIDGET(dial) == panel->filter_cutoff_dial) {
+        parameter_store_set_filter_cutoff(panel->params, value);
+    }
+    else if (GTK_WIDGET(dial) == panel->filter_resonance_dial) {
+        parameter_store_set_filter_resonance(panel->params, value);
+    }
+    else if (GTK_WIDGET(dial) == panel->filter_cutoff_lfo_freq_dial) {
+        parameter_store_set_filter_cutoff_lfo(panel->params, value,
+                                          waveform_dial_get_value(WAVEFORM_DIAL(panel->filter_cutoff_lfo_amount_dial)));
+    }
+    else if (GTK_WIDGET(dial) == panel->filter_cutoff_lfo_amount_dial) {
+        parameter_store_set_filter_cutoff_lfo(panel->params,
+                                          waveform_dial_get_value(WAVEFORM_DIAL(panel->filter_cutoff_lfo_freq_dial)),
+                                          value);
+    }
+    else if (GTK_WIDGET(dial) == panel->filter_res_lfo_freq_dial) {
+        parameter_store_set_filter_res_lfo(panel->params, value,
+                                       waveform_dial_get_value(WAVEFORM_DIAL(panel->filter_res_lfo_amount_dial)));
+    }
+    else if (GTK_WIDGET(dial) == panel->filter_res_lfo_amount_dial) {
+        parameter_store_set_filter_res_lfo(panel->params,
+                                       waveform_dial_get_value(WAVEFORM_DIAL(panel->filter_res_lfo_freq_dial)),
+                                       value);
     }
     
     GtkWidget *value_label = g_object_get_data(G_OBJECT(gtk_widget_get_parent(GTK_WIDGET(dial))), 
@@ -58,6 +83,7 @@ static void on_parameter_changed(WaveformDial *dial, float value, gpointer user_
         gtk_label_set_text(GTK_LABEL(value_label), value_str);
     }
 }
+
 
 static GtkWidget* create_dial_with_labels(const char* label_text, float min, float max, float step) {
     GtkWidget *container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
@@ -209,6 +235,62 @@ ControlPanel* control_panel_create(GtkWidget *parent, ParameterStore *params) {
     gtk_grid_attach(GTK_GRID(dcm_grid), dcm_depth_container, 1, 0, 1, 1);
     
     gtk_box_pack_start(GTK_BOX(panel->container), dcm_frame, FALSE, FALSE, 5);
+
+
+     // Create filter frame
+    GtkWidget *filter_frame = gtk_frame_new("Filter");
+    GtkWidget *filter_grid = gtk_grid_new();
+    gtk_grid_set_column_spacing(GTK_GRID(filter_grid), 10);  // Space between dials
+    gtk_container_add(GTK_CONTAINER(filter_frame), filter_grid);
+    
+    // Create filter dials with better names
+    GtkWidget *cutoff_container = create_dial_with_labels("Cutoff", 20.0, 20000.0, 1.0);
+    GtkWidget *resonance_container = create_dial_with_labels("Resonance", 0.0, 1.0, 0.01);
+    GtkWidget *cutoff_lfo_freq_container = create_dial_with_labels("LFO Freq", 0.0, 20.0, 0.1);
+    GtkWidget *cutoff_lfo_amt_container = create_dial_with_labels("Mod Depth", 0.0, 1.0, 0.01);
+    GtkWidget *res_lfo_freq_container = create_dial_with_labels("Res LFO", 0.0, 20.0, 0.1);
+    GtkWidget *res_lfo_amt_container = create_dial_with_labels("Res Mod", 0.0, 1.0, 0.01);
+
+    // Store dial references
+    panel->filter_cutoff_dial = g_object_get_data(G_OBJECT(cutoff_container), "dial");
+    panel->filter_resonance_dial = g_object_get_data(G_OBJECT(resonance_container), "dial");
+    panel->filter_cutoff_lfo_freq_dial = g_object_get_data(G_OBJECT(cutoff_lfo_freq_container), "dial");
+    panel->filter_cutoff_lfo_amount_dial = g_object_get_data(G_OBJECT(cutoff_lfo_amt_container), "dial");
+    panel->filter_res_lfo_freq_dial = g_object_get_data(G_OBJECT(res_lfo_freq_container), "dial");
+    panel->filter_res_lfo_amount_dial = g_object_get_data(G_OBJECT(res_lfo_amt_container), "dial");
+
+    // Set initial values
+    initialize_dial_with_value(cutoff_container, panel->filter_cutoff_dial, 20000.0f, params, NULL);
+    initialize_dial_with_value(resonance_container, panel->filter_resonance_dial, 0.0f, params, NULL);
+    initialize_dial_with_value(cutoff_lfo_freq_container, panel->filter_cutoff_lfo_freq_dial, 0.0f, params, NULL);
+    initialize_dial_with_value(cutoff_lfo_amt_container, panel->filter_cutoff_lfo_amount_dial, 0.0f, params, NULL);
+    initialize_dial_with_value(res_lfo_freq_container, panel->filter_res_lfo_freq_dial, 0.0f, params, NULL);
+    initialize_dial_with_value(res_lfo_amt_container, panel->filter_res_lfo_amount_dial, 0.0f, params, NULL);
+
+    // Layout all dials in a single row
+    gtk_grid_attach(GTK_GRID(filter_grid), cutoff_container, 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(filter_grid), resonance_container, 1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(filter_grid), cutoff_lfo_freq_container, 2, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(filter_grid), cutoff_lfo_amt_container, 3, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(filter_grid), res_lfo_freq_container, 4, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(filter_grid), res_lfo_amt_container, 5, 0, 1, 1);
+
+    gtk_box_pack_start(GTK_BOX(panel->container), filter_frame, FALSE, FALSE, 5);
+
+    // Connect callbacks
+    waveform_dial_set_callback(WAVEFORM_DIAL(panel->filter_cutoff_dial),
+                              on_parameter_changed, panel);
+    waveform_dial_set_callback(WAVEFORM_DIAL(panel->filter_resonance_dial),
+                              on_parameter_changed, panel);
+    waveform_dial_set_callback(WAVEFORM_DIAL(panel->filter_cutoff_lfo_freq_dial),
+                              on_parameter_changed, panel);
+    waveform_dial_set_callback(WAVEFORM_DIAL(panel->filter_cutoff_lfo_amount_dial),
+                              on_parameter_changed, panel);
+    waveform_dial_set_callback(WAVEFORM_DIAL(panel->filter_res_lfo_freq_dial),
+                              on_parameter_changed, panel);
+    waveform_dial_set_callback(WAVEFORM_DIAL(panel->filter_res_lfo_amount_dial),
+                              on_parameter_changed, panel);
+
 
     // Connect all callbacks
     g_signal_connect(panel->waveform_combo, "changed",
