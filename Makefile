@@ -20,7 +20,8 @@ CFLAGS += $(shell pkg-config --cflags $(PKGCONFIG_DEPS))
 LIBS += $(shell pkg-config --libs $(PKGCONFIG_DEPS))
 
 # Additional compiler flags
-CFLAGS += -Wall -Wextra -O2 -g
+#CFLAGS += -Wall -Wextra -O2 -g
+CFLAGS += -Wall -Wextra -O3
 CFLAGS += -I$(INCDIR)
 
 # Additional linker flags

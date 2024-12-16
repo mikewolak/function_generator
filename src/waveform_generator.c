@@ -43,7 +43,6 @@ static void ladder_filter_reset(LadderFilter *filter) {
     filter->res_mod = 0.0f;     // Reset resonance mod
 }
 
-
 static float ladder_filter_process(LadderFilter *filter, float input, float sample_rate) {
     // Calculate cutoff frequency (keep in Hz)
     float fc = filter->cutoff + filter->cutoff_mod;

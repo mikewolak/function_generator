@@ -136,10 +136,11 @@ static int pa_callback(const void *input,
     (void)timeInfo;
     (void)statusFlags;
     
-    static bool priority_set = false;
+    //static bool priority_set = false;
     AudioManager *manager = (AudioManager *)userData;
     float *out = (float*)output;
     
+/*
     // Set thread priority once on first callback
     if (!priority_set) {
         // macOS thread priority setting
@@ -150,7 +151,7 @@ static int pa_callback(const void *input,
             g_print("Audio callback: Failed to set thread QoS\n");
         }
     }
-    
+*/   
     g_mutex_lock(&manager->buffer.mutex);
     
     // Track actual callback timing
