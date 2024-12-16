@@ -1,5 +1,7 @@
 #include "waveform_generator.h"
+#include "parameter_store.h"
 #include "scope_window.h"
+#include "audio_manager.h"
 #include <math.h>
 
 static size_t audio_callback(float *buffer, size_t frames, void *userdata);
@@ -212,21 +214,38 @@ static size_t audio_callback(float *buffer, size_t frames, void *userdata) {
 // Modified generator thread sampling logic
 
 static gpointer generator_thread_func(gpointer data) {
-   if (!data) {
-       g_print("ERROR: Generator thread started with NULL data\n");
-       return NULL;
-   }
+    g_print("Generator thread: Starting initialization\n");
+    
+    if (!data) {
+        g_print("ERROR: Generator thread started with NULL data\n");
+        return NULL;
+    }
 
-   WaveformGenerator *gen = (WaveformGenerator *)data;
-   if (!gen->scope) {
-       g_print("ERROR: Generator has NULL scope\n");
-       return NULL;
-   }
-   
-   g_print("Generator thread starting\n");
-   float audio_buffer[AUDIO_BUFFER_SIZE * 2];
-   float scope_buffer[SCOPE_BUFFER_SIZE * 2];
-   size_t scope_samples = 0;
+    struct WaveformGenerator *gen = (struct WaveformGenerator *)data;
+    g_print("Generator thread: Got generator pointer\n");
+    
+    if (!gen->scope) {
+        g_print("ERROR: Generator has NULL scope\n");
+        return NULL;
+    }
+    g_print("Generator thread: Got valid scope pointer\n");
+    
+    if (!gen->scope->waveform_data) {
+        g_print("ERROR: Scope has NULL waveform data\n");
+        return NULL;
+    }
+    g_print("Generator thread: Got valid waveform data\n");
+    
+    // Initialize FFT if needed
+    if (gen->scope->fft) {
+        g_print("Generator thread: Found FFT analyzer\n");
+    }
+
+    float audio_buffer[AUDIO_BUFFER_SIZE * 2];
+    float scope_buffer[SCOPE_BUFFER_SIZE * 2];
+    size_t scope_samples = 0;
+    
+   g_print("Generator thread: Local buffers initialized\n");
    size_t failed_lock_count = 0;
    bool was_locked_out = false;
    

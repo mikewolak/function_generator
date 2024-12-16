@@ -3,60 +3,60 @@
 
 #include <gtk/gtk.h>
 #include "parameter_store.h"
-#include <stdatomic.h>
+#include "fft_analyzer.h"
 #include "common_defs.h"
 
-typedef struct {
-    size_t position;      // Sample position of trigger
-    float value;         // Signal value at trigger
-    gboolean valid;          // Whether we have a valid trigger
-} TriggerInfo;
+// Define TriggerInfo before using it in ScopeWindow
+struct TriggerInfo {
+    size_t position;
+    float value;
+    gboolean valid;
+};
 
-typedef struct {
-    float *buffers[3];          // Triple buffer array
-    atomic_int write_index;     // Current writer buffer
-    atomic_int display_index;   // Current display buffer
-    atomic_int process_index;   // Buffer being processed
-    size_t buffer_size;         // Size of each buffer
-    atomic_bool new_data;       // Flag for new data availability
-} DisplayBuffers;
+typedef struct TriggerInfo TriggerInfo;
 
-
-
-
-typedef struct {
+struct ScopeWindow {
+    struct ParameterStore *params;
+    size_t data_size;
+    float *waveform_data;
+    size_t write_pos;
+    
+    // Display parameters
+    float time_scale;
+    float volt_scale;
+    float trigger_level;
+    gboolean auto_trigger;
+    int window_width;
+    int window_height;
+    gboolean size_changed;
+    float time_per_div;
+    
+    // Trigger info
+    struct TriggerInfo trigger;
+    
+    // Drawing area
     GtkWidget *drawing_area;
-    float *waveform_data;      // Circular buffer for waveform data
-    size_t data_size;          // Size of waveform buffer in samples
-    size_t write_pos;          // Current write position in samples
-    float time_scale;          // Horizontal scale (ms/div)
-    float volt_scale;          // Vertical scale (V/div)
-    float trigger_level;       // Trigger level
-    gboolean auto_trigger;     // Auto trigger mode
-    GMutex data_mutex;         // Mutex for data access
-    ParameterStore *params;    // Reference to parameter store
-    int window_width;          // Current window width
-    int window_height;         // Current window height
-    gboolean size_changed;     // Flag for window resize
-    float time_per_div;        // Time base in milliseconds per division
-    TriggerInfo trigger;  // Current trigger information
-    GMutex update_mutex;     // Protect buffer updates
-    DisplayBuffers *triple_buffer;
+    
+    // Synchronization
+    GMutex data_mutex;
+    GMutex update_mutex;
+    
+    // FFT Analysis
+    struct FFTAnalyzer *fft;
+    float *fft_data;
+    gboolean show_fft;
+    int fft_height;
+};
 
-
-
-} ScopeWindow;
+typedef struct ScopeWindow ScopeWindow;
 
 // Function declarations
-ScopeWindow* scope_window_create(GtkWidget *parent, ParameterStore *params);
-void scope_window_destroy(ScopeWindow *scope);
-void scope_window_update_data(ScopeWindow *scope, const float *data, size_t count);
-void scope_window_set_time_scale(ScopeWindow *scope, float ms_per_div);
-void scope_window_set_volt_scale(ScopeWindow *scope, float volts_per_div);
-void scope_window_set_trigger(ScopeWindow *scope, float level, gboolean auto_mode);
-
+struct ScopeWindow* scope_window_create(GtkWidget *parent, struct ParameterStore *params);
+void scope_window_destroy(struct ScopeWindow *scope);
+void scope_window_update_data(struct ScopeWindow *scope, const float *data, size_t count);
 void scope_window_downsample_buffer(const float *source_buffer, size_t source_samples,
                                   float *display_buffer, size_t display_width,
                                   size_t trigger_position);
+void scope_window_toggle_fft(struct ScopeWindow *scope, gboolean show);
 
 #endif // SCOPE_WINDOW_H

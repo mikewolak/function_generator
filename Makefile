@@ -15,7 +15,7 @@ SOURCES = $(wildcard $(SRCDIR)/*.c)
 OBJECTS = $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 
 # Get compiler and linker flags from pkg-config
-PKGCONFIG_DEPS = gtk+-3.0 gl portaudio-2.0 sndfile
+PKGCONFIG_DEPS = gtk+-3.0 gl portaudio-2.0 sndfile fftw3
 CFLAGS += $(shell pkg-config --cflags $(PKGCONFIG_DEPS))
 LIBS += $(shell pkg-config --libs $(PKGCONFIG_DEPS))
 
