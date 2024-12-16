@@ -7,7 +7,8 @@ typedef enum {
     WAVE_SINE,
     WAVE_SQUARE,
     WAVE_SAW,
-    WAVE_TRIANGLE
+    WAVE_TRIANGLE,
+    WAVE_PINK_NOISE
 } WaveformType;
 
 struct ParameterStore {

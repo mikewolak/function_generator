@@ -9,6 +9,27 @@ static float generate_waveform(float phase, WaveformType type, float duty_cycle)
 static gpointer generator_thread_func(gpointer data);
 size_t circular_buffer_write(CircularBuffer *buffer, float *data, size_t frames);
 
+#define PINK_NOISE_OCTAVES 7
+static float pink_noise_values[PINK_NOISE_OCTAVES] = {0};
+static float pink_noise_total = 0;
+
+static float generate_pink_noise(void) {
+    float white = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
+    
+    // Update pink noise values
+    pink_noise_total -= pink_noise_values[0];
+    for (int i = 0; i < PINK_NOISE_OCTAVES - 1; i++) {
+        pink_noise_values[i] = pink_noise_values[i + 1];
+    }
+    pink_noise_values[PINK_NOISE_OCTAVES - 1] = white;
+    pink_noise_total += white;
+    
+    // Mix white noise with filtered pink noise
+    float pink = pink_noise_total / PINK_NOISE_OCTAVES;
+    return (pink + white) * 0.5f;
+}
+
+
 // Utility function for tanh approximation (faster than std tanh)
 static float fast_tanh(float x) {
     float x2 = x * x;
@@ -65,11 +86,7 @@ static float ladder_filter_process(LadderFilter *filter, float input, float samp
     return filter->delay[3];
 }
 
-
 static float generate_waveform(float phase, WaveformType type, float duty_cycle) {
-    // Normalize phase to 0-2π range
-    phase = fmodf(phase, 2.0f * M_PI);
-    
     switch(type) {
         case WAVE_SINE:
             return sinf(phase);
@@ -90,11 +107,16 @@ static float generate_waveform(float phase, WaveformType type, float duty_cycle)
                 return 3.0f - normalized * 4.0f;
             }
         }
+
+        case WAVE_PINK_NOISE:
+            return generate_pink_noise();
             
         default:
             return 0.0f;
     }
 }
+
+
 
 static size_t audio_callback(float *buffer, size_t frames, void *userdata) {
    WaveformGenerator *gen = (WaveformGenerator *)userdata;

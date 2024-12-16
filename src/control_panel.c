@@ -136,7 +136,7 @@ ControlPanel* control_panel_create(GtkWidget *parent, ParameterStore *params) {
     gtk_container_add(GTK_CONTAINER(wave_frame), wave_box);
     
     panel->waveform_combo = gtk_combo_box_text_new();
-    const char *waveform_names[] = {"Sine", "Square", "Sawtooth", "Triangle", NULL};
+    const char *waveform_names[] = {"Sine", "Square", "Sawtooth", "Triangle", "Pink Noise", NULL};
     for (const char **name = waveform_names; *name != NULL; name++) {
         gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(panel->waveform_combo), *name);
     }
