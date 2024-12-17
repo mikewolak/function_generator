@@ -246,6 +246,7 @@ ControlPanel* control_panel_create(GtkWidget *parent, ParameterStore *params) {
     // Create filter dials with better names
     GtkWidget *cutoff_container = create_dial_with_labels("Cutoff", 20.0, 20000.0, 1.0);
     GtkWidget *resonance_container = create_dial_with_labels("Resonance", 0.0, 1.0, 0.01);
+
     GtkWidget *cutoff_lfo_freq_container = create_dial_with_labels("LFO Freq", 0.0, 20.0, 0.1);
     GtkWidget *cutoff_lfo_amt_container = create_dial_with_labels("Mod Depth", 0.0, 1.0, 0.01);
     GtkWidget *res_lfo_freq_container = create_dial_with_labels("Res LFO", 0.0, 20.0, 0.1);

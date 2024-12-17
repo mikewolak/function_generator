@@ -14,6 +14,8 @@
 #define TARGET_WRITE_INTERVAL_MS 4
 #define MIN_BUFFER_FILL ((size_t)(AUDIO_BUFFER_SIZE))
 #define BUFFER_DURATION_MS ((AUDIO_BUFFER_SIZE * 1000.0) / SAMPLE_RATE)
+//#define MIN_BUFFER_FILL ((size_t)(AUDIO_BUFFER_SIZE * 2))  // Double the minimum requirement
+
 
 // Forward declarations
 struct WaveformGenerator;

@@ -1,5 +1,6 @@
 #include "parameter_store.h"
 #include <stdlib.h>
+#include <math.h>
 
 struct ParameterStore* parameter_store_create(void) {
     struct ParameterStore *store = g_new0(struct ParameterStore, 1);

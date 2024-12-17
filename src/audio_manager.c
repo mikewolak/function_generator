@@ -43,13 +43,14 @@ void circular_buffer_destroy(CircularBuffer *buffer) {
 size_t circular_buffer_write(CircularBuffer *buffer, float *data, size_t frames) {
     g_mutex_lock(&buffer->mutex);
 
-    // First calculate available space (in frames)
+    // Get all values under lock
     size_t frames_available = buffer->size - buffer->frames_stored;
     size_t frames_to_write = (frames <= frames_available) ? frames : frames_available;
+    size_t current_write_pos = buffer->write_pos;
 
     if (frames_to_write > 0) {
         // Calculate in stereo samples for safer bounds checking
-        size_t stereo_write_pos = buffer->write_pos * 2;
+        size_t stereo_write_pos = current_write_pos * 2;
         size_t stereo_buffer_size = buffer->size * 2;
         size_t stereo_frames_to_write = frames_to_write * 2;
 
@@ -66,13 +67,8 @@ size_t circular_buffer_write(CircularBuffer *buffer, float *data, size_t frames)
                    (stereo_frames_to_write - first_chunk_stereo) * sizeof(float));
         }
 
-        buffer->write_pos = (buffer->write_pos + frames_to_write) % buffer->size;
+        buffer->write_pos = (current_write_pos + frames_to_write) % buffer->size;
         buffer->frames_stored += frames_to_write;
-
-        g_print("Write: stored=%zu/%zu pos=%zu/%zu (stereo_pos=%zu)\n",
-                buffer->frames_stored, buffer->size,
-                buffer->write_pos, buffer->read_pos,
-                stereo_write_pos);
     }
 
     g_mutex_unlock(&buffer->mutex);
@@ -82,39 +78,39 @@ size_t circular_buffer_write(CircularBuffer *buffer, float *data, size_t frames)
 size_t circular_buffer_read(CircularBuffer *buffer, float *data, size_t frames) {
     g_mutex_lock(&buffer->mutex);
     
-    // Check if we have enough data
-    if (buffer->frames_stored < MIN_BUFFER_FILL) {
+    // Get all values we need under lock
+    size_t current_frames = buffer->frames_stored;
+    size_t current_read_pos = buffer->read_pos;
+    size_t current_write_pos = buffer->write_pos;
+    
+    if (current_frames < MIN_BUFFER_FILL) {
         g_print("Buffer low (%zu < %zu), outputting silence (write_pos=%zu, read_pos=%zu)\n", 
-                buffer->frames_stored, (size_t)MIN_BUFFER_FILL,
-                buffer->write_pos, buffer->read_pos);
+                current_frames, (size_t)MIN_BUFFER_FILL,
+                current_write_pos, current_read_pos);
         g_mutex_unlock(&buffer->mutex);
         memset(data, 0, frames * 2 * sizeof(float));
         return frames;
     }
     
     size_t frames_to_read = frames;
-    if (frames_to_read > buffer->frames_stored) {
-        frames_to_read = buffer->frames_stored;
+    if (frames_to_read > current_frames) {
+        frames_to_read = current_frames;
     }
     
     if (frames_to_read > 0) {
-        size_t first_chunk = buffer->size - buffer->read_pos;
+        size_t first_chunk = buffer->size - current_read_pos;
         if (frames_to_read <= first_chunk) {
-            memcpy(data, buffer->data + (buffer->read_pos * 2),
+            memcpy(data, buffer->data + (current_read_pos * 2),
                    frames_to_read * 2 * sizeof(float));
         } else {
-            memcpy(data, buffer->data + (buffer->read_pos * 2),
+            memcpy(data, buffer->data + (current_read_pos * 2),
                    first_chunk * 2 * sizeof(float));
             memcpy(data + (first_chunk * 2), buffer->data,
                    (frames_to_read - first_chunk) * 2 * sizeof(float));
         }
         
-        buffer->read_pos = (buffer->read_pos + frames_to_read) % buffer->size;
+        buffer->read_pos = (current_read_pos + frames_to_read) % buffer->size;
         buffer->frames_stored -= frames_to_read;
-        
-        g_print("Read: stored=%zu/%zu pos=%zu/%zu\n",
-                buffer->frames_stored, buffer->size,
-                buffer->write_pos, buffer->read_pos);
     }
     
     if (frames_to_read < frames) {
@@ -159,7 +155,7 @@ static int pa_callback(const void *input,
     
     if (manager->buffer.last_callback_time != 0) {
         gdouble interval = (current_time - manager->buffer.last_callback_time) / 1000.0;
-        g_print("Audio callback interval: %.3f ms\n", interval);
+        //g_print("Audio callback interval: %.3f ms\n", interval);
     }
     manager->buffer.last_callback_time = current_time;
     manager->buffer.callback_count++;

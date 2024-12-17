@@ -128,19 +128,24 @@ static gboolean find_trigger_point(const float *buffer, size_t buffer_size,
 
 
 static void on_size_allocate(GtkWidget *widget, GtkAllocation *allocation, gpointer data) {
-    (void)widget;
     struct ScopeWindow *scope = (struct ScopeWindow *)data;
+    if (!scope) return;
     
-    g_mutex_lock(&scope->data_mutex);
-    if (scope->window_width != allocation->width || 
-        scope->window_height != allocation->height) {
-        scope->window_width = allocation->width;
-        scope->window_height = allocation->height;
-        scope->size_changed = TRUE;
-        g_print("Scope window resized to: %dx%d\n", 
-                scope->window_width, scope->window_height);
+    // Try to get both locks or don't update at all
+    if (g_mutex_trylock(&scope->update_mutex)) {
+        if (g_mutex_trylock(&scope->data_mutex)) {
+            if (scope->window_width != allocation->width || 
+                scope->window_height != allocation->height) {
+                scope->window_width = allocation->width;
+                scope->window_height = allocation->height;
+                scope->size_changed = TRUE;
+                g_print("Scope window resized to: %dx%d\n", 
+                        scope->window_width, scope->window_height);
+            }
+            g_mutex_unlock(&scope->data_mutex);
+        }
+        g_mutex_unlock(&scope->update_mutex);
     }
-    g_mutex_unlock(&scope->data_mutex);
 }
 
 static gboolean on_draw(GtkWidget *widget, cairo_t *cr) {
@@ -152,9 +157,6 @@ static gboolean on_draw(GtkWidget *widget, cairo_t *cr) {
         return FALSE;
     }
     
-    g_mutex_lock(&scope->update_mutex);
-    g_mutex_lock(&scope->data_mutex);
-    
     // Get widget dimensions
     GtkAllocation allocation;
     gtk_widget_get_allocation(widget, &allocation);
@@ -165,6 +167,22 @@ static gboolean on_draw(GtkWidget *widget, cairo_t *cr) {
     int wave_height = (height * 2) / 3;
     int fft_height = height - wave_height;
     scope->fft_height = fft_height;
+
+    // Create local buffer for waveform data
+    float *local_data = g_malloc(scope->data_size * 2 * sizeof(float));
+    size_t local_write_pos;
+    
+    if (!local_data) {
+        return FALSE;
+    }
+
+    // Only lock while copying the data we need
+    g_mutex_lock(&scope->data_mutex);
+    local_write_pos = scope->write_pos;
+    if (local_write_pos > 0) {
+        memcpy(local_data, scope->waveform_data, local_write_pos * 2 * sizeof(float));
+    }
+    g_mutex_unlock(&scope->data_mutex);
     
     // Draw black background
     cairo_set_source_rgb(cr, 0, 0, 0);
@@ -199,15 +217,14 @@ static gboolean on_draw(GtkWidget *widget, cairo_t *cr) {
     cairo_stroke(cr);
     
     // Draw waveform if we have data
-    if (scope->write_pos > 0) {
+    if (local_write_pos > 0) {
         float *display_data = g_malloc(width * sizeof(float));
         if (display_data) {
-            // Find trigger in our stable buffer
             scope->trigger.valid = FALSE;  // Force new trigger search
-            find_trigger_point(scope->waveform_data, scope->write_pos, width, &scope->trigger);
+            find_trigger_point(local_data, local_write_pos, width, &scope->trigger);
             
             if (scope->trigger.valid) {
-                scope_window_downsample_buffer(scope->waveform_data, scope->write_pos,
+                scope_window_downsample_buffer(local_data, local_write_pos,
                                             display_data, width,
                                             scope->trigger.position);
                 
@@ -238,21 +255,13 @@ static gboolean on_draw(GtkWidget *widget, cairo_t *cr) {
     }
 
     // Draw FFT if enabled
-    if (scope->show_fft && scope->fft) {
+    if (scope->show_fft && scope->fft && local_write_pos > 0) {
         // Process current buffer through FFT
-        fft_analyzer_process(scope->fft, scope->waveform_data, scope->write_pos);
+        fft_analyzer_process(scope->fft, local_data, local_write_pos);
         
         // Draw FFT grid
         cairo_set_source_rgb(cr, 0.2, 0.2, 0.2);
         cairo_set_line_width(cr, 1.0);
-        
-        // Draw amplitude grid lines
-        for (int db = -80; db <= 0; db += 20) {
-            float y = wave_height + fft_height * (1.0 - (float)(db - MIN_DB) / (MAX_DB - MIN_DB));
-            cairo_move_to(cr, 0, y);
-            cairo_line_to(cr, width, y);
-        }
-        cairo_stroke(cr);
         
         // Draw frequency grid lines
         double freq_markers[] = {20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000};
@@ -265,8 +274,16 @@ static gboolean on_draw(GtkWidget *widget, cairo_t *cr) {
             cairo_line_to(cr, x, height);
         }
         cairo_stroke(cr);
+        
+        // Draw amplitude grid lines
+        for (int db = -80; db <= 0; db += 20) {
+            float y = wave_height + fft_height * (1.0 - (float)(db - MIN_DB) / (MAX_DB - MIN_DB));
+            cairo_move_to(cr, 0, y);
+            cairo_line_to(cr, width, y);
+        }
+        cairo_stroke(cr);
 
-        // Draw FFT spectrum and track peak
+        // Draw FFT spectrum
         cairo_set_source_rgba(cr, 1, 1, 0, 0.8);
         cairo_set_line_width(cr, 1.5);
         
@@ -276,7 +293,6 @@ static gboolean on_draw(GtkWidget *widget, cairo_t *cr) {
         float peak_y = 0;
         float peak_freq = 0;
         
-        // First pass to find peak and draw spectrum
         for (int x = 0; x < width; x++) {
             double freq = 20.0 * pow(1000.0, x / (double)width);
             freq = fmin(freq, SAMPLE_RATE/2);
@@ -365,9 +381,7 @@ static gboolean on_draw(GtkWidget *widget, cairo_t *cr) {
         }
     }
     
-    g_mutex_unlock(&scope->data_mutex);
-    g_mutex_unlock(&scope->update_mutex);
-    
+    g_free(local_data);
     return TRUE;
 }
 
@@ -500,9 +514,10 @@ void scope_window_downsample_buffer(const float *source_buffer, size_t source_sa
     // Calculate safe boundaries
     size_t safe_samples = MIN(source_samples, SCOPE_BUFFER_SIZE);
     size_t safe_trigger = MIN(trigger_position, safe_samples - 1);
-    
+   /* 
     g_print("Scope: Safe downsampling %zu samples to %zu pixels (trigger at %zu)\n",
             safe_samples, display_width, safe_trigger);
+    */
     
     // Pre-trigger samples
    // size_t trigger_pixel = display_width / 3;
