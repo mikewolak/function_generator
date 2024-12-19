@@ -377,21 +377,11 @@ static gpointer generator_thread_func(gpointer data) {
 struct WaveformGenerator* waveform_generator_create(ParameterStore *params, struct ScopeWindow *scope, AudioManager *audio) {
     g_print("Creating waveform generator\n");
     
-    if (!params || !scope) {
-        g_print("ERROR: Invalid parameters for waveform generator\n");
-        return NULL;
-    }
-    
     WaveformGenerator *gen = g_new0(WaveformGenerator, 1);
-    if (!gen) {
-        g_print("ERROR: Failed to allocate waveform generator\n");
-        return NULL;
-    }
-    
     gen->params = params;
     gen->scope = scope;
     gen->audio = audio;
-    gen->running = TRUE;
+    gen->running = FALSE;  // Start as not running
     gen->phase = 0.0f;
     gen->fm_phase = 0.0f;
     gen->am_phase = 0.0f;
@@ -405,12 +395,12 @@ struct WaveformGenerator* waveform_generator_create(ParameterStore *params, stru
     g_mutex_init(&gen->mutex);
     g_cond_init(&gen->cond);
     
-    // Start generator thread
-    gen->generator_thread = g_thread_new("waveform_generator", 
-                                       generator_thread_func, gen);
+    // Don't start thread yet
+    gen->generator_thread = NULL;
     
     return gen;
 }
+
 
 void waveform_generator_destroy(WaveformGenerator *gen) {
     if (!gen) return;
@@ -449,3 +439,13 @@ void waveform_generator_set_audio_enabled(WaveformGenerator *gen, bool enable) {
     }
 }
 
+
+void waveform_generator_start(WaveformGenerator *gen) {
+    if (!gen || gen->generator_thread) return;  // Already running
+    
+    g_mutex_lock(&gen->mutex);
+    gen->running = TRUE;
+    gen->generator_thread = g_thread_new("waveform_generator", 
+                                       generator_thread_func, gen);
+    g_mutex_unlock(&gen->mutex);
+}

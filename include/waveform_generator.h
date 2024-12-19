@@ -57,5 +57,8 @@ struct WaveformGenerator* waveform_generator_create(struct ParameterStore *param
                                                   struct AudioManager *audio);
 void waveform_generator_destroy(struct WaveformGenerator *gen);
 void waveform_generator_set_audio_enabled(struct WaveformGenerator *gen, bool enable);
+void waveform_generator_start(struct WaveformGenerator *gen);  
+
+
 
 #endif // WAVEFORM_GENERATOR_H

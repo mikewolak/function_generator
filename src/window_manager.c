@@ -15,12 +15,11 @@ typedef struct {
 static gboolean do_device_switch_idle(gpointer user_data) {
     DeviceSwitchData *data = (DeviceSwitchData *)user_data;
     
-    // Switch device first
-    bool switch_success = audio_manager_switch_device(data->manager->audio_manager, data->device_name);
-    
-    // Only enable audio if switch was successful
-    if (switch_success && data->manager->generator) {
-        waveform_generator_set_audio_enabled(data->manager->generator, true);
+    if (audio_manager_switch_device(data->manager->audio_manager, data->device_name)) {
+        if (data->manager->generator) {
+            waveform_generator_start(data->manager->generator);
+            waveform_generator_set_audio_enabled(data->manager->generator, true);
+        }
     }
     
     g_free(data->device_name);
