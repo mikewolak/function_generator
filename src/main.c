@@ -36,7 +36,7 @@ int main(int argc, char *argv[]) {
     }
     
     g_print("Creating scope window\n");
-    ScopeWindow *scope = scope_window_create(window_manager->scope_container, params);
+    struct ScopeWindow *scope = scope_window_create(window_manager->scope_container, params);
     if (!scope) {
         g_print("Failed to create scope window\n");
         window_manager_destroy(window_manager);
@@ -45,8 +45,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Now create generator with proper scope
-    g_print("Creating waveform generator\n");
+    // Create generator but don't start audio yet - wait for device selection
+    g_print("Creating waveform generator - audio disabled\n");
     WaveformGenerator *generator = waveform_generator_create(params, scope, audio);
     if (!generator) {
         g_print("Failed to create waveform generator\n");
@@ -59,6 +59,7 @@ int main(int argc, char *argv[]) {
 
     // Update window manager with generator reference
     window_manager->generator = generator;
+    
     g_print("Creating control panel\n");
     ControlPanel *control_panel = control_panel_create(window_manager->control_container, params);
     if (!control_panel) {

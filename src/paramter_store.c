@@ -47,12 +47,29 @@ void parameter_store_set_waveform(struct ParameterStore *store, WaveformType typ
 }
 
 void parameter_store_set_frequency(struct ParameterStore *store, float freq) {
-    g_mutex_lock(&store->mutex);
-    g_print("Setting frequency: %.2f Hz\n", freq);
-    store->frequency = freq;
-    g_cond_signal(&store->changed);
-    g_mutex_unlock(&store->mutex);
+    if (!store) {
+        g_print("Error: NULL parameter store in set_frequency\n");
+        return;
+    }
+    
+    // Validate frequency range
+    if (freq < 0.0f || freq > 20000.0f) {
+        g_print("Warning: Frequency %.2f Hz out of valid range (0-20000 Hz)\n", freq);
+        freq = CLAMP(freq, 0.0f, 20000.0f);
+    }
+    
+    g_print("Setting frequency: %.2f Hz (store: %p)\n", freq, (void*)store);
+    if (g_mutex_trylock(&store->mutex)) {
+        store->frequency = freq;
+        g_cond_signal(&store->changed);
+        g_mutex_unlock(&store->mutex);
+        g_print("Frequency updated successfully\n");
+    } else {
+        g_print("Warning: Could not acquire parameter store mutex for frequency update\n");
+    }
 }
+
+
 
 void parameter_store_set_amplitude(struct ParameterStore *store, float amp) {
     g_mutex_lock(&store->mutex);

@@ -348,17 +348,17 @@ bool audio_manager_get_cached_devices(AudioManager *manager, char ***device_name
 
 bool audio_manager_switch_device(AudioManager *manager, const char *device_name) {
     if (!manager || !device_name) return false;
-
+    
     // Quick check of active state
     g_mutex_lock(&manager->mutex);
     bool was_active = manager->is_active;
     g_mutex_unlock(&manager->mutex);
-
+    
     // Stop playback if needed
     if (was_active) {
         audio_manager_toggle_playback(manager, false, NULL, NULL);
     }
-
+    
     // Update device selection with quick lock
     g_mutex_lock(&manager->mutex);
     g_free(manager->selected_device);
@@ -367,18 +367,7 @@ bool audio_manager_switch_device(AudioManager *manager, const char *device_name)
     manager->output_device = new_device;
     g_mutex_unlock(&manager->mutex);
 
-    // Get callback info with quick lock
-    g_mutex_lock(&manager->mutex);
-    AudioDataCallback callback = manager->data_callback;
-    void *callback_data = manager->callback_data;
-    g_mutex_unlock(&manager->mutex);
-
-    // Restart if needed
-    if (was_active) {
-        return audio_manager_toggle_playback(manager, true, callback, callback_data);
-    }
-
-    return true;
+    return true;  // Device switch successful
 }
 
 bool audio_manager_is_playback_active(AudioManager *manager) {

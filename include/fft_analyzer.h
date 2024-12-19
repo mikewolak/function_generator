@@ -11,14 +11,14 @@
 #define MAX_DB 0.0f
 
 struct FFTAnalyzer {
-    fftw_plan plan;
-    double *window;
-    double *input;
-    fftw_complex *output;
-    float *magnitudes;
-    float *smoothed_mags;
-    size_t size;
-    double window_power;
+   fftw_plan plan;
+   double *window;
+   double *input;
+   fftw_complex *output;
+   float *magnitudes;
+   float *smoothed_mags;
+   size_t size;
+   double window_power;
 };
 
 typedef struct FFTAnalyzer FFTAnalyzer;

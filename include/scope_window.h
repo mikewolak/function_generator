@@ -1,3 +1,4 @@
+// scope_window.h
 #ifndef SCOPE_WINDOW_H
 #define SCOPE_WINDOW_H
 
@@ -6,14 +7,12 @@
 #include "fft_analyzer.h"
 #include "common_defs.h"
 
-// Define TriggerInfo before using it in ScopeWindow
+// Keep the original struct definition
 struct TriggerInfo {
     size_t position;
     float value;
     gboolean valid;
 };
-
-typedef struct TriggerInfo TriggerInfo;
 
 struct ScopeWindow {
     struct ParameterStore *params;
@@ -46,9 +45,11 @@ struct ScopeWindow {
     float *fft_data;
     gboolean show_fft;
     int fft_height;
-};
 
-typedef struct ScopeWindow ScopeWindow;
+    gboolean drawing_in_progress; 
+
+
+};
 
 // Function declarations
 struct ScopeWindow* scope_window_create(GtkWidget *parent, struct ParameterStore *params);

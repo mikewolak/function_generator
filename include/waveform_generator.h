@@ -44,6 +44,9 @@ struct WaveformGenerator {
     uint32_t sample_rate;  // Sample rate in Hz
     size_t buffer_size;    // Number of samples per update
     LadderFilter filter;
+    GMutex init_mutex;
+    GCond init_cond;
+    gboolean fully_initialized;
 };
 
 typedef struct WaveformGenerator WaveformGenerator;
